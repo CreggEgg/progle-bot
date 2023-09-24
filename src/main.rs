@@ -49,7 +49,7 @@ async fn add_to_database(
 ) -> Option<()> {
     let guild = guild?.0 as i64;
     let user = user.0 as i64;
-    println!("adding to database {guild} {user} {attempts} {code_game}");
+    info!("adding to database {guild} {user} {attempts} {code_game}");
 
     let is_linked_to_server = pool
         .fetch_optional(
