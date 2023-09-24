@@ -150,6 +150,8 @@ impl EventHandler for Bot {
         let guild = msg.guild_id;
         let user = msg.author.id;
 
+        info!("got message");
+
         match progle_result {
             Ok(ProgleResult {
                 code_game,
