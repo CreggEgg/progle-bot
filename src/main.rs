@@ -28,6 +28,7 @@ struct AOCLeaderboard {
 struct AOCMember {
     local_score: Option<usize>,
     name: String,
+    stars: Option<usize>,
     completion_day_level: HashMap<String, serde_json::Value>,
 }
 
@@ -149,7 +150,7 @@ async fn get_users_averages_as_str(
     }
 }
 
-fn generate_scores(leaderboard: AOCLeaderboard) -> Vec<(String, usize)> {
+fn generate_scores(leaderboard: AOCLeaderboard) -> Vec<(String, usize, usize)> {
     leaderboard
         .members
         .into_iter()
@@ -158,6 +159,7 @@ fn generate_scores(leaderboard: AOCLeaderboard) -> Vec<(String, usize)> {
             (
                 member.name,
                 member.local_score.unwrap_or(1) * member.completion_day_level.len().max(1),
+                member.stars.unwrap_or(0),
             )
         })
         .collect()
@@ -272,7 +274,7 @@ impl EventHandler for Bot {
                                 .into_iter()
                                 .enumerate()
                                 .map(|(idx, el)| {
-                                    format!("{}. {} who has score {}", idx + 1, el.0, el.1)
+                                    format!("{}. {} who has score {} and {} stars", idx + 1, el.0,el.1,el.2)
                                 })
                                 .collect::<Vec<String>>()
                                 .join("\n")
