@@ -2,21 +2,33 @@ use anyhow::anyhow;
 use chrono::{self, Datelike};
 use pom::parser::*;
 use pom::set::Set;
-use serenity::builder::CreateApplicationCommandOption;
-use serenity::model::channel::Message;
+use serenity::async_trait;
 use serenity::model::gateway::Ready;
 use serenity::model::prelude::application_command::CommandDataOptionValue;
 use serenity::model::prelude::*;
 use serenity::prelude::*;
-use serenity::{async_trait, model::guild};
 use shuttle_runtime::CustomError;
 use shuttle_secrets::SecretStore;
 use sqlx::*;
+use std::collections::HashMap;
 use tracing::{error, info};
 
+#[derive(serde::Deserialize)]
 struct ProgleResult {
     code_game: bool,
     attempts: u16,
+}
+
+#[derive(serde::Deserialize)]
+struct AOCLeaderboard {
+    members: HashMap<String, AOCMember>,
+}
+
+#[derive(serde::Deserialize)]
+struct AOCMember {
+    local_score: Option<usize>,
+    name: String,
+    completion_day_level: HashMap<String, serde_json::Value>,
 }
 
 fn progle_result<'a>() -> Parser<'a, char, ProgleResult> {
@@ -38,6 +50,8 @@ fn progle_result<'a>() -> Parser<'a, char, ProgleResult> {
 
 struct Bot {
     pool: PgPool,
+    aoc_token: String,
+    aoc_url: String,
 }
 
 async fn add_to_database(
@@ -135,6 +149,20 @@ async fn get_users_averages_as_str(
     }
 }
 
+fn generate_scores(leaderboard: AOCLeaderboard) -> Vec<(String, usize)> {
+    leaderboard
+        .members
+        .into_iter()
+        .map(|it| {
+            let member = it.1;
+            (
+                member.name,
+                member.local_score.unwrap_or(1) * member.completion_day_level.len().max(1),
+            )
+        })
+        .collect()
+}
+
 #[async_trait]
 impl EventHandler for Bot {
     async fn message(&self, ctx: Context, msg: Message) {
@@ -180,13 +208,17 @@ impl EventHandler for Bot {
                                 .name("user")
                                 .description("the user to get the averages of")
                         })
+                });
+                commands.create_application_command(|command| {
+                    command
+                        .name("advent")
+                        .description("view advent of code leaderboard")
                 })
             })
             .await;
 
-            match res {
-                Err(err) => eprintln!("error occured while getting ready: {err}"),
-                Ok(_) => (),
+            if let Err(err) = res {
+                println!("error occured while getting ready: {err}")
             }
         }
     }
@@ -214,6 +246,39 @@ impl EventHandler for Bot {
                         .await
                     }
                 },
+                "advent" => {
+                    println!("{}", self.aoc_url);
+                    let client = reqwest::Client::new();
+                    let res = match client
+                        .get(&self.aoc_url)
+                        .header("Cookie", format!("session={};", &self.aoc_token))
+                        .send()
+                        .await
+                    {
+                        Ok(x) => x.text().await,
+                        Err(x) => Err(x),
+                    };
+                    match res {
+                        Err(err) => {
+                            println!("{}", err);
+                            String::from("Encountered an error fetching the data")
+                        }
+                        Ok(text) => {
+                            let leaderboard: AOCLeaderboard =
+                                serde_json::from_str(&text).expect("Unexpected json");
+                            let mut leaderboard = generate_scores(leaderboard);
+                            leaderboard.sort_by(|a, b| b.1.cmp(&a.1));
+                            leaderboard
+                                .into_iter()
+                                .enumerate()
+                                .map(|(idx, el)| {
+                                    format!("{}. {} who has score {}", idx + 1, el.0, el.1)
+                                })
+                                .collect::<Vec<String>>()
+                                .join("\n")
+                        }
+                    }
+                }
                 command => unreachable!("Unknown command: {}", command),
             };
             // send `response_content` to the discord server
@@ -246,11 +311,27 @@ async fn serenity(
         return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
     };
 
+    let aoc_token = if let Some(token) = secret_store.get("AOC_TOKEN") {
+        token
+    } else {
+        return Err(anyhow!("'AOC_TOKEN' was not found").into());
+    };
+
+    let aoc_url = if let Some(token) = secret_store.get("AOC_URL") {
+        token
+    } else {
+        return Err(anyhow!("'AOC_URL' was not found").into());
+    };
+
     // Set gateway intents, which decides what events the bot will be notified about
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
     let client = Client::builder(&token, intents)
-        .event_handler(Bot { pool: pool })
+        .event_handler(Bot {
+            pool,
+            aoc_token,
+            aoc_url,
+        })
         .await
         .expect("Err creating client");
 
