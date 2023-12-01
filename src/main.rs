@@ -150,19 +150,42 @@ async fn get_users_averages_as_str(
     }
 }
 
-fn generate_scores(leaderboard: AOCLeaderboard) -> Vec<(String, usize, usize)> {
+struct ScoreInformation {
+    username: String,
+    score: usize,
+    stars: usize,
+    days: usize,
+}
+
+fn generate_scores(leaderboard: AOCLeaderboard) -> Vec<ScoreInformation> {
     leaderboard
         .members
         .into_iter()
         .map(|it| {
             let member = it.1;
-            (
-                member.name,
-                member.local_score.unwrap_or(1) * member.completion_day_level.len().max(1),
-                member.stars.unwrap_or(0),
-            )
+            ScoreInformation {
+                username: member.name,
+                score: member.local_score.unwrap_or(1) * member.completion_day_level.len().max(1),
+                stars: member.stars.unwrap_or(0),
+                days: member.completion_day_level.len(),
+            }
         })
         .collect()
+}
+
+fn progress_bar(days: usize) -> String {
+    let percent = days as f64 / 25.0;
+    let max = 15.0;
+    let amount = (percent * max).ceil() as usize;
+    let mut green: Vec<String> = (0..amount).map(|_| {
+        "🟩".to_string()
+    }).collect();
+    let mut red: Vec<String> = (0..((max as usize) - amount)).map(|_| {
+        "🟥".to_string()
+    }).collect();
+    green.append(&mut red);
+    green.join("")
+
 }
 
 #[async_trait]
@@ -269,12 +292,19 @@ impl EventHandler for Bot {
                             let leaderboard: AOCLeaderboard =
                                 serde_json::from_str(&text).expect("Unexpected json");
                             let mut leaderboard = generate_scores(leaderboard);
-                            leaderboard.sort_by(|a, b| b.1.cmp(&a.1));
+                            leaderboard.sort_by(|a, b| b.score.cmp(&a.score));
                             leaderboard
                                 .into_iter()
                                 .enumerate()
                                 .map(|(idx, el)| {
-                                    format!("{}. {} who has score {} and {} stars", idx + 1, el.0,el.1,el.2)
+                                    format!(
+                                        "{}. {} who has score {} and {} stars\n{}",
+                                        idx + 1,
+                                        el.username,
+                                        el.score,
+                                        el.stars,
+                                        progress_bar(el.days)
+                                    )
                                 })
                                 .collect::<Vec<String>>()
                                 .join("\n")
