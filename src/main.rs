@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use chrono::{self, Datelike};
+use lettre::{transport::smtp::authentication::Credentials, Message, message::{header::{ContentType, Header, self}, Mailboxes}, SmtpTransport, Transport};
 use pom::parser::*;
 use pom::set::Set;
 use serenity::async_trait;
@@ -53,6 +54,7 @@ struct Bot {
     pool: PgPool,
     aoc_token: String,
     aoc_url: String,
+    smtp_credentials: Credentials,
 }
 
 async fn add_to_database(
@@ -190,7 +192,7 @@ fn progress_bar(days: usize) -> String {
 
 #[async_trait]
 impl EventHandler for Bot {
-    async fn message(&self, ctx: Context, msg: Message) {
+    async fn message(&self, ctx: Context, msg: serenity::model::channel::Message) {
         if msg.content == "!hello" {
             if let Err(e) = msg.channel_id.say(&ctx.http, "world!").await {
                 error!("Error sending message: {:?}", e);
@@ -205,6 +207,36 @@ impl EventHandler for Bot {
 
         info!("got message");
 
+        if (msg.content.contains("@everyone")) {
+            let email = msg.content.replace("@everyone","everyone");
+            println!("{}", email);
+
+            let to_address = "CreggEgg <eggcregg@gmail.com>, Charles Hurst<chhurst08@gmail.com>";
+
+            let mailboxes: Mailboxes = to_address.parse().unwrap();
+
+            let to_header: header::To = mailboxes.into();
+
+            let mail = Message::builder()
+                .from("EarthQuakers <earthquakersdiscord@gmail.com>".parse().unwrap())
+                .mailbox(to_header)
+                .header(ContentType::TEXT_PLAIN)
+                .body(email)
+                .unwrap();
+
+            let mailer = SmtpTransport::relay("smtp.gmail.com")
+                .unwrap()
+                .credentials(self.smtp_credentials.clone())
+                .build();
+
+            match mailer.send(&mail) {
+                Ok(_) => msg.channel_id.say(&ctx.http,"Sent email").await,
+                Err(e) => {
+dbg!(e);
+                    msg.channel_id.say(&ctx.http, "Failed to send email").await
+                }
+            };
+        }
         match progle_result {
             Ok(ProgleResult {
                 code_game,
@@ -355,6 +387,15 @@ async fn serenity(
         return Err(anyhow!("'AOC_URL' was not found").into());
     };
 
+
+    let smpt_pass = if let Some(pass) = secret_store.get("SMTP_PASS") {
+        pass
+    } else {
+        return Err(anyhow!("'SMTP_PASS' was not found").into());
+    };
+
+    let smtp_credentials = Credentials::new("earthquakersdiscord@gmail.com".to_owned(), smpt_pass);
+
     // Set gateway intents, which decides what events the bot will be notified about
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
@@ -363,6 +404,7 @@ async fn serenity(
             pool,
             aoc_token,
             aoc_url,
+            smtp_credentials
         })
         .await
         .expect("Err creating client");
